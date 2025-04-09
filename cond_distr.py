@@ -252,7 +252,7 @@ def F3_max(x, mu, sig_tot, rho):
     )
 
 
-def f3_max(x, mu, sig_tot, rho, dx=0.05):
+def f3_max(x, mu, sig_tot, rho, dx=0.01):
     # take derivative (but poorly!) of cdf F3
     x_ = np.arange(x.min(), x.max(), dx)
     F3 = F3_max(x_, mu, sig_tot, rho)
@@ -262,7 +262,7 @@ def f3_max(x, mu, sig_tot, rho, dx=0.05):
 
 def f2_max(x, mu, sig_tot, rho):
     x_ = (x - mu) / sig_tot
-    return 2 * norm_pdf(x_) * norm_cdf((1 - rho) / (1 - rho**2) ** 0.5 * x_)
+    return 2 * norm_pdf(x_, 0, 1) * norm_cdf((1 - rho) / (1 - rho**2) ** 0.5 * x_, 0, 1)
 
 
 def calc_p1_below_cut(cut, mu, sig):
@@ -288,44 +288,53 @@ def calc_p3_below_cut(cut, mu, sig, rho):
 
 
 def pdf_comb(
-    x, mu, sig, rho, cut, p_sjoemel=0.0, p_repeat_1=1, p_repeat_2=1, p_repeat_high=0
+    x,
+    mu,
+    sig,
+    rho,
+    cut,
+    p_sjoemel=0.0,
+    p_repeat_1=1,
+    p_repeat_2=1,
+    p_repeat_high=0,
+    split=False,
 ):
-    dr = 0.05  # for rounding
-    p1 = calc_p1_below_cut(cut - dr, mu, sig)
-    p2 = calc_p2_below_cut(cut - dr, mu, sig, rho) / p1
-    p3 = calc_p3_below_cut(cut - dr, mu, sig, rho) / (p1 * p2)
+    p1 = calc_p1_below_cut(cut, mu, sig)
+    p2 = calc_p2_below_cut(cut, mu, sig, rho) / p1
+    p3 = calc_p3_below_cut(cut, mu, sig, rho) / (p1 * p2)
 
     f1 = norm_pdf(x, mu, sig)
-    f2 = pdf_cond_2nd_meas(x, mu, sig, rho, cut - dr)
+    f2 = pdf_cond_2nd_meas(x, mu, sig, rho, cut)
 
     # no need to calculate below/above cut
     f3_copy = np.zeros_like(x)
-    mask = x < cut - dr
-    f3 = pdf_cond_3rd_meas(x[~mask], mu, sig, rho, cut - dr, norm=p2 * p1)
+    mask = x < cut
+    f3 = pdf_cond_3rd_meas(x[~mask], mu, sig, rho, cut, norm=p2 * p1)
     f3_copy[~mask] = f3
     f3 = f3_copy
 
-    fmax_3_copy = np.zeros_like(x)
-    fmax_3 = f3_max(x[mask], mu, sig, rho)
-    norm_max_3 = F3_max(cut - dr, mu, sig, rho)
+    # fmax_3_copy = np.zeros_like(x)
+    fmax_3 = f3_max(x, mu, sig, rho)
+    norm_max_3 = F3_max(cut, mu, sig, rho)
     fmax_3 /= norm_max_3
-    fmax_3_copy[mask] = fmax_3
-    fmax_3 = fmax_3_copy
+    fmax_3[x > cut] = 0
+    # fmax_3_copy[mask] = fmax_3
+    # fmax_3 = fmax_3_copy
     if p_repeat_high > 0:
         fmax_2 = f2_max(x, mu, sig, rho)  # normalize?
     else:
         fmax_2 = 0
 
     if isinstance(x, np.ndarray):
-        f1[x < cut - dr] *= 1 - p_repeat_1
-        f2[x < cut - dr] *= 1 - p_repeat_2
+        f1[x < cut] *= 1 - p_repeat_1
+        f2[x < cut] *= 1 - p_repeat_2
         if p_repeat_high > 0:
-            fmax_2[x < cut - dr] *= 1 - p_repeat_1
+            fmax_2[x < cut] *= 1 - p_repeat_1
     else:
         raise NotImplementedError("use arrays")
 
     f_sjoemel = np.where(
-        (x > cut - dr) & (x < cut + dr), 1 / (2 * dr), 0
+        (x > cut - 0.05) & (x < cut + 0.05), 1 / (2 * 0.05), 0
     )  # sjoemel and round to cutoff
     fp1 = f1
     fp2 = (
@@ -334,7 +343,10 @@ def pdf_comb(
     )
     fp3 = p1 * p2 * f3 * p_repeat_1 * p_repeat_2
     fpmax = p1 * p2 * p3 * p_repeat_1 * p_repeat_2 * fmax_3
-    return (fp1 + fp2 + fp3 + fpmax) * (1 - p_sjoemel) + p_sjoemel * f_sjoemel
+    if split:
+        return fp1, fp2, fp3, fpmax
+    else:
+        return (fp1 + fp2 + fp3 + fpmax) * (1 - p_sjoemel) + p_sjoemel * f_sjoemel
 
 
 @njit
